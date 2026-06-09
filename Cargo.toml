@@ -1,0 +1,27 @@
+[package]
+name = "laquna"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "laquna: a deterministic, reversible friction-encoder byte transform. Not encryption."
+repository = "https://github.com/skydeval/laquna"
+readme = "README.md"
+publish = false
+
+[features]
+default = ["std", "alloc"]
+# `alloc` enables the decode path and `Vec<u8>` returns (pure-Rust zstd decoder).
+alloc = ["dep:ruzstd"]
+# `std` enables the encode path (C-backed zstd encoder via zstd-sys). Implies `alloc`.
+std = ["alloc", "dep:zstd"]
+
+[dependencies]
+# ChaCha20 stream cipher (RFC 8439 IETF variant: 12-byte nonce, 32-bit counter).
+chacha20 = { version = "0.9", default-features = false }
+# HKDF-SHA256 slug-key derivation (RFC 5869).
+hkdf = { version = "0.12", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+# Decode-side zstd: pure-Rust decoder, no_std + alloc compatible.
+ruzstd = { version = "0.7", default-features = false, optional = true }
+# Encode-side zstd: C-backed encoder, requires std.
+zstd = { version = "0.13", optional = true }
