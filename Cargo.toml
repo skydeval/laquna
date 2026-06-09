@@ -22,6 +22,9 @@ chacha20 = { version = "0.9", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 # Decode-side zstd: pure-Rust decoder, no_std + alloc compatible.
-ruzstd = { version = "0.7", default-features = false, optional = true }
+# `hash` (no_std-safe twox-hash) is required for content-checksum verification:
+# ruzstd reads/computes the checksum but does not compare them itself, so the
+# decoder does the comparison manually (SPEC §6 step 7). `std` stays off.
+ruzstd = { version = "0.7", default-features = false, features = ["hash"], optional = true }
 # Encode-side zstd: C-backed encoder, requires std.
 zstd = { version = "0.13", optional = true }
