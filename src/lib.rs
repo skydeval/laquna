@@ -142,6 +142,18 @@ fn decompress_verify(compressed: &[u8]) -> Result<Vec<u8>, DecodeError> {
 /// byte-identical output. The caller MUST ensure seeds are unique per record within a
 /// slug (SPEC §8) — reuse is nonce reuse in the underlying stream cipher.
 ///
+/// # Examples
+///
+/// ```
+/// use laquna::{decode, encode};
+///
+/// let slug = [0x5a_u8; 32];
+/// let seed = b"did:plc:example||3kabcd2lqr7s2y||laquna/v0.1";
+///
+/// let artifact = encode(b"a private post", seed, &slug);
+/// assert_eq!(decode(&artifact, seed).unwrap(), b"a private post");
+/// ```
+///
 /// # Panics
 ///
 /// Panics if `seed` is empty. An empty seed cannot satisfy the per-record uniqueness
