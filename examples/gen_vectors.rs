@@ -20,7 +20,7 @@
 //! catching round-collapse and hardcoded-offset bugs, across two distinct-offset
 //! materials — is covered by the in-source unit tests instead.
 
-use laquna::{decode, encode, DecodeError};
+use laquna::{decode, encode, DecodeError, _internals};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -170,6 +170,77 @@ fn make_b(
     }
 }
 
+/// One Schema C vector: the network stream's internal state for a `(seed, slug)` pair.
+/// These expose internal state and are not required for conformance; they let a
+/// third-party implementer verify the network stage by stage.
+struct SchemaC {
+    name: &'static str,
+    description: String,
+    seed: Vec<u8>,
+    slug: [u8; 32],
+    offset: u8,
+    stream_a: Vec<u8>,
+    stream_b: Vec<u8>,
+    stream_c: Vec<u8>,
+    substitutions: [[u8; 256]; 8],
+    permutations: [[u8; 64]; 8],
+    initial_state: [u8; 64],
+    state_after_1: [u8; 64],
+    state_after_2: [u8; 64],
+    state_after_8: [u8; 64],
+    combined: Vec<u8>,
+}
+
+fn make_c(name: &'static str, description: &str, seed: &[u8], slug: [u8; 32]) -> SchemaC {
+    let stream_c = _internals::network_stream(seed, &slug, 64);
+    let state_after_8 = _internals::state_after_rounds(seed, &slug, 8);
+    // Self-check: a full block of passes equals the first block of stream C output.
+    assert_eq!(
+        &state_after_8[..],
+        &stream_c[..],
+        "state after 8 passes must equal the first stream-C block for '{name}'"
+    );
+    SchemaC {
+        name,
+        description: description.to_string(),
+        seed: seed.to_vec(),
+        slug,
+        offset: _internals::diffuse_offset(seed, &slug),
+        stream_a: _internals::anchor_stream(seed, &slug, 64),
+        stream_b: _internals::extendable_stream(seed, &slug, 64),
+        stream_c,
+        substitutions: _internals::substitution_tables(seed, &slug),
+        permutations: _internals::position_permutations(seed, &slug),
+        initial_state: _internals::initial_state(seed, &slug),
+        state_after_1: _internals::state_after_rounds(seed, &slug, 1),
+        state_after_2: _internals::state_after_rounds(seed, &slug, 2),
+        state_after_8,
+        combined: _internals::combined_mask(seed, &slug, 64),
+    }
+}
+
+impl SchemaC {
+    fn to_json(&self) -> Value {
+        json!({
+            "name": self.name,
+            "description": self.description,
+            "seed_hex": hex::encode(&self.seed),
+            "slug_hex": hex::encode(self.slug),
+            "diffuse_offset": self.offset,
+            "stream_a_first64_hex": hex::encode(&self.stream_a),
+            "stream_b_first64_hex": hex::encode(&self.stream_b),
+            "stream_c_first64_hex": hex::encode(&self.stream_c),
+            "substitution_tables_hex": self.substitutions.iter().map(hex::encode).collect::<Vec<_>>(),
+            "position_permutations_hex": self.permutations.iter().map(hex::encode).collect::<Vec<_>>(),
+            "initial_state_hex": hex::encode(self.initial_state),
+            "state_after_1_round_hex": hex::encode(self.state_after_1),
+            "state_after_2_rounds_hex": hex::encode(self.state_after_2),
+            "state_after_8_rounds_hex": hex::encode(self.state_after_8),
+            "combined_first64_hex": hex::encode(&self.combined),
+        })
+    }
+}
+
 fn main() {
     // ---- Schema A: encode / round-trip vectors ----
     let schema_a = vec![
@@ -238,20 +309,32 @@ fn main() {
         make_b("bitflip_payload", "Valid artifact with a single payload bit flipped.", bitflip, SEED, DecodeError::DecompressionFailed),
     ];
 
+    // ---- Schema C: component / round-by-round vectors (debugging aids) ----
+    // Two pairs chosen so the diffuse offsets differ, which catches a hardcoded offset.
+    let schema_c = vec![
+        make_c("pair1", "First (seed, slug) pair; diffuse offset 59.", SEED, SLUG),
+        make_c("pair2", "Second (seed, slug) pair; distinct diffuse offset 55.", SEED, SLUG2),
+    ];
+    assert_ne!(
+        schema_c[0].offset, schema_c[1].offset,
+        "the two Schema C pairs must have distinct diffuse offsets"
+    );
+
     // ---- Write tests/vectors.json ----
     let root = json!({
         "spec": "laquna",
-        "spec_version": "0.2",
-        "note": "Schema A artifacts are from the reference implementation only. Other implementations need not produce byte-identical encode output; they MUST decode each artifact under its seed to the listed plaintext. These are reference-decode targets, not cross-encode targets. Schema B error cases are verified deterministic at generation time. Schema C component vectors are not included: emitting them would require exposing internal state through the public API; their regression intent is covered by the in-source unit tests.",
+        "spec_version": "0.2.1",
+        "note": "Schema A artifacts are from the reference implementation only. Other implementations need not produce byte-identical encode output; they MUST decode each artifact under its seed to the listed plaintext. These are reference-decode targets, not cross-encode targets. Schema B error cases are verified deterministic at generation time. Schema C exposes the network stream's internal state for two distinct-offset (seed, slug) pairs; it is a debugging aid, not required for conformance.",
         "schema_a": Value::Array(schema_a.iter().map(SchemaA::to_json).collect()),
         "schema_b": Value::Array(schema_b.iter().map(SchemaB::to_json).collect()),
+        "schema_c": Value::Array(schema_c.iter().map(SchemaC::to_json).collect()),
     });
     let serialized = serde_json::to_string_pretty(&root).expect("serialize vectors");
     std::fs::write("tests/vectors.json", format!("{serialized}\n")).expect("write tests/vectors.json");
     eprintln!("wrote tests/vectors.json ({} bytes)", serialized.len() + 1);
 
     // ---- Emit the human-readable Markdown listing for SPEC §16 ----
-    print_markdown(&schema_a, &schema_b, wrong_seed);
+    print_markdown(&schema_a, &schema_b, &schema_c, wrong_seed);
 }
 
 /// Threshold above which a vector's hex is summarized (by length + SHA-256) rather than
@@ -277,7 +360,12 @@ fn hex_field(bytes: &[u8]) -> String {
     }
 }
 
-fn print_markdown(schema_a: &[SchemaA], schema_b: &[SchemaB], wrong_seed: &[u8]) {
+fn print_markdown(
+    schema_a: &[SchemaA],
+    schema_b: &[SchemaB],
+    schema_c: &[SchemaC],
+    wrong_seed: &[u8],
+) {
     println!("<!-- BEGIN GENERATED VECTORS (examples/gen_vectors.rs) -->");
     println!();
     println!("The byte-exact, machine-readable vectors live in `tests/vectors.json`; the");
@@ -315,6 +403,32 @@ fn print_markdown(schema_a: &[SchemaA], schema_b: &[SchemaB], wrong_seed: &[u8])
         println!("  - artifact: {}", hex_field(&v.artifact));
         println!("  - seed: `{}`", hex::encode(&v.seed));
         println!("  - expected: `{expected}`");
+    }
+    println!();
+    println!("**Schema C — component / round-by-round vectors (implementer debugging aids):**");
+    println!();
+    println!("Not required for conformance. Two `(seed, slug)` pairs with deliberately distinct");
+    println!("diffuse offsets; an implementation that hardcoded one offset would match at most one.");
+    for v in schema_c {
+        println!();
+        println!("- **{}** — {}", v.name, v.description);
+        println!("  - seed: `{}`", hex::encode(&v.seed));
+        println!("  - slug: `{}`", hex::encode(v.slug));
+        println!("  - diffuse offset: `{}`", v.offset);
+        println!("  - stream A (first 64): `{}`", hex::encode(&v.stream_a));
+        println!("  - stream B (first 64): `{}`", hex::encode(&v.stream_b));
+        println!("  - stream C (first 64): `{}`", hex::encode(&v.stream_c));
+        for (i, s) in v.substitutions.iter().enumerate() {
+            println!("  - S_{} : `{}`", i + 1, hex::encode(s));
+        }
+        for (i, p) in v.permutations.iter().enumerate() {
+            println!("  - P_{} : `{}`", i + 1, hex::encode(p));
+        }
+        println!("  - W after 0 rounds: `{}`", hex::encode(v.initial_state));
+        println!("  - W after 1 round: `{}`", hex::encode(v.state_after_1));
+        println!("  - W after 2 rounds: `{}`", hex::encode(v.state_after_2));
+        println!("  - W after 8 rounds: `{}`", hex::encode(v.state_after_8));
+        println!("  - combined keystream (first 64): `{}`", hex::encode(&v.combined));
     }
     println!();
     println!("<!-- END GENERATED VECTORS -->");
