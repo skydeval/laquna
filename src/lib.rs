@@ -43,12 +43,32 @@ use materials::Material;
 
 /// Encode `plaintext` into an opaque artifact.
 ///
-/// `seed` carries per-record entropy (and is treated as opaque bytes); `slug` is the
-/// 32-byte rotation-batch identifier embedded inline in the output.
+/// `seed` carries per-record entropy and is treated as opaque bytes; it must be unique
+/// per record within a slug (the consuming system is responsible for that uniqueness).
+/// `slug` is the 32-byte rotation-batch identifier, embedded inline in the output.
 ///
 /// # Panics
 ///
-/// Panics if `seed` is empty.
+/// Panics if `seed` is empty. An empty seed cannot satisfy the per-record uniqueness
+/// requirement and is treated as a caller-precondition violation.
+///
+/// # Determinism
+///
+/// Encoding is deterministic: identical `(plaintext, seed, slug)` inputs produce
+/// byte-identical artifacts. Consumers that need to hide plaintext equality must ensure
+/// seed uniqueness at the granularity at which equality should be hidden.
+///
+/// # Examples
+///
+/// ```
+/// use laquna::{decode, encode};
+///
+/// let slug = [0x5a_u8; 32];
+/// let seed = b"did:plc:example||3kabcd2lqr7s2y||per-record-unique";
+///
+/// let artifact = encode(b"a private post", seed, &slug);
+/// assert_eq!(decode(&artifact, seed).unwrap(), b"a private post");
+/// ```
 #[cfg(feature = "std")]
 pub fn encode(plaintext: &[u8], seed: &[u8], slug: &[u8; 32]) -> Vec<u8> {
     assert!(!seed.is_empty(), "laquna: seed must be non-empty");
@@ -64,12 +84,18 @@ pub fn encode(plaintext: &[u8], seed: &[u8], slug: &[u8; 32]) -> Vec<u8> {
 /// Decode an artifact back to its plaintext.
 ///
 /// The 32-byte slug is read from the tail of `encoded`; the caller supplies only the
-/// `seed` used at encode time.
+/// `seed` used at encode time. The seed must reproduce the value used when the artifact
+/// was encoded, or recovery fails.
 ///
 /// # Errors
 ///
-/// Returns a [`DecodeError`] for an empty seed, a too-short or wrong-version artifact,
-/// or bytes that fail to validate (wrong seed, wrong slug, or corruption).
+/// - [`DecodeError::EmptySeed`] if `seed` is empty (checked before any structural
+///   inspection of `encoded`).
+/// - [`DecodeError::InputTooShort`] if `encoded` is shorter than the minimum length.
+/// - [`DecodeError::InvalidVersion`] if the leading version byte is not the one this
+///   version of the format accepts.
+/// - [`DecodeError::DecompressionFailed`] if the recovered bytes fail to validate —
+///   typically a wrong seed, a wrong slug, or corruption.
 #[cfg(feature = "alloc")]
 pub fn decode(encoded: &[u8], seed: &[u8]) -> Result<Vec<u8>, DecodeError> {
     if seed.is_empty() {
