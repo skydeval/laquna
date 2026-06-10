@@ -1,4 +1,4 @@
-//! Decode error semantics and empty-seed rejection (SPEC §6, §7, §8, §13 Schema B).
+//! Decode error semantics and empty-seed handling.
 
 mod common;
 
@@ -11,7 +11,7 @@ const PLAINTEXT: &[u8] = b"some private post content of a reasonable, compressib
 #[test]
 fn too_short_lengths() {
     for len in [0usize, 1, 16, 32] {
-        let buf = vec![0x01u8; len];
+        let buf = vec![0x02u8; len];
         assert_eq!(
             decode(&buf, SEED),
             Err(DecodeError::InputTooShort),
@@ -20,8 +20,8 @@ fn too_short_lengths() {
     }
 }
 
-/// Length check precedes the version check: a 32-byte buffer with a bad version byte
-/// is still InputTooShort, not InvalidVersion (SPEC §6 step order).
+/// Length check precedes the version check: a 32-byte buffer with a valid-looking
+/// version byte is still InputTooShort.
 #[test]
 fn length_check_precedes_version_check() {
     let buf = vec![0x02u8; 32];
@@ -29,9 +29,10 @@ fn length_check_precedes_version_check() {
 }
 
 /// A long-enough artifact with an unsupported version byte reports InvalidVersion(N).
+/// 0x01 is the previous format version and is now rejected.
 #[test]
 fn invalid_version_bytes() {
-    for v in [0x00u8, 0x02, 0xff] {
+    for v in [0x00u8, 0x01, 0x03, 0xff] {
         let mut buf = vec![0u8; 40];
         buf[0] = v;
         assert_eq!(
@@ -42,8 +43,7 @@ fn invalid_version_bytes() {
     }
 }
 
-/// Decoding a valid artifact under the wrong seed yields random compressed bytes that
-/// fail zstd validation.
+/// Decoding a valid artifact under the wrong seed yields bytes that fail validation.
 #[test]
 fn wrong_seed_fails_decompression() {
     let artifact = encode(PLAINTEXT, SEED, &SLUG);
@@ -54,7 +54,7 @@ fn wrong_seed_fails_decompression() {
     );
 }
 
-/// Corrupting the tail slug changes the derived slug-key, so the recovered bytes fail.
+/// Corrupting the tail slug changes the derived materials, so recovery fails.
 #[test]
 fn corrupted_slug_fails_decompression() {
     let mut artifact = encode(PLAINTEXT, SEED, &SLUG);
@@ -74,16 +74,19 @@ fn single_bit_flip_payload_fails() {
     assert_eq!(decode(&artifact, SEED), Err(DecodeError::DecompressionFailed));
 }
 
-/// An empty seed is a caller-precondition violation and panics on encode (SPEC §8).
+/// An empty seed is a caller-precondition violation and panics on encode.
 #[test]
 #[should_panic(expected = "seed must be non-empty")]
 fn encode_empty_seed_panics() {
     let _ = encode(b"x", b"", &SLUG);
 }
 
-/// An empty seed panics on decode as well, before any structural inspection.
+/// On decode, which operates on untrusted input, an empty seed is returned as an error
+/// rather than panicking — and it is checked before any structural inspection.
 #[test]
-#[should_panic(expected = "seed must be non-empty")]
-fn decode_empty_seed_panics() {
-    let _ = decode(&[0u8; 40], b"");
+fn decode_empty_seed_returns_error() {
+    let artifact = encode(PLAINTEXT, SEED, &SLUG);
+    assert_eq!(decode(&artifact, b""), Err(DecodeError::EmptySeed));
+    // Checked before length/version: even a malformed artifact reports EmptySeed.
+    assert_eq!(decode(&[0u8; 4], b""), Err(DecodeError::EmptySeed));
 }

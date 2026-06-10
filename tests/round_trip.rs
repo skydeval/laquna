@@ -10,7 +10,7 @@ use laquna::{decode, encode};
 fn assert_round_trip(plaintext: &[u8]) {
     let artifact = encode(plaintext, SEED, &SLUG);
 
-    assert_eq!(artifact[0], 0x01, "version byte must be 0x01");
+    assert_eq!(artifact[0], 0x02, "version byte must be 0x02");
     assert!(artifact.len() >= 33, "artifact must meet the 33-byte floor");
     assert_eq!(
         &artifact[artifact.len() - 32..],
@@ -62,7 +62,7 @@ fn stress_64kib() {
 }
 
 /// The plaintext contains the 32-byte slug value inline; the implementation must not
-/// strip, escape, or otherwise mangle those bytes (SPEC §13, Schema A).
+/// strip, escape, or otherwise mangle those bytes.
 #[test]
 fn plaintext_contains_slug_inline() {
     let mut pt = Vec::new();

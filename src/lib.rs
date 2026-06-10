@@ -99,13 +99,56 @@ fn build_mask(material: &Material, length: usize) -> Vec<u8> {
 }
 
 /// Compress the plaintext ahead of masking.
+///
+/// The content-checksum frame flag is enabled so the decode path can catch a class of
+/// wrong-seed and corruption cases that would otherwise decompress to silent garbage.
 #[cfg(feature = "std")]
-fn compress(_plaintext: &[u8]) -> Vec<u8> {
-    unimplemented!("compress lands in the pipeline arc")
+fn compress(plaintext: &[u8]) -> Vec<u8> {
+    use zstd::bulk::Compressor;
+    use zstd::stream::raw::CParameter;
+
+    let mut compressor = Compressor::new(3).expect("compression level 3 is valid");
+    compressor
+        .set_parameter(CParameter::ChecksumFlag(true))
+        .expect("enabling the content-checksum frame flag is supported");
+    compressor
+        .compress(plaintext)
+        .expect("compression of an in-memory buffer does not fail")
 }
 
 /// Reverse [`compress`], surfacing any validation failure as a [`DecodeError`].
+///
+/// The content checksum carried in the frame is compared manually here: the decoder
+/// reads and recomputes it but does not compare them itself, so a mismatch would
+/// otherwise pass silently. Any parse, decode, or checksum failure maps to
+/// [`DecodeError::DecompressionFailed`].
 #[cfg(feature = "alloc")]
-fn decompress(_payload_input: &[u8]) -> Result<Vec<u8>, DecodeError> {
-    unimplemented!("decompress lands in the pipeline arc")
+fn decompress(payload_input: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    use ruzstd::io::Read;
+    use ruzstd::StreamingDecoder;
+
+    let mut decoder =
+        StreamingDecoder::new(payload_input).map_err(|_| DecodeError::DecompressionFailed)?;
+
+    let mut out = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let read = decoder
+            .read(&mut buf)
+            .map_err(|_| DecodeError::DecompressionFailed)?;
+        if read == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..read]);
+    }
+
+    let frame = decoder.into_frame_decoder();
+    if let Some(stored) = frame.get_checksum_from_data() {
+        match frame.get_calculated_checksum() {
+            Some(computed) if computed == stored => {}
+            _ => return Err(DecodeError::DecompressionFailed),
+        }
+    }
+
+    Ok(out)
 }

@@ -1,4 +1,4 @@
-//! Determinism and input-separation properties (SPEC §4, §13 Schema A).
+//! Determinism and input-separation properties.
 
 mod common;
 
@@ -27,7 +27,8 @@ fn distinct_slugs_differ() {
 /// Two distinct seeds over the same plaintext + slug must differ.
 #[test]
 fn distinct_seeds_differ() {
-    let other_seed: &[u8] = b"did:plc:7iza6de2dwap2sbkpav7c6c6||3different||laquna/v0.1";
+    let other_seed: &[u8] =
+        b"did:plc:7iza6de2dwap2sbkpav7c6c6||3different||laquna/v0.2";
     let a = encode(PLAINTEXT, SEED, &SLUG);
     let b = encode(PLAINTEXT, other_seed, &SLUG);
     assert_ne!(a, b);
