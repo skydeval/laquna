@@ -1,37 +1,35 @@
 [package]
 name = "laquna"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "laquna: a deterministic, reversible friction-encoder byte transform. Not encryption."
+description = "Byte transform for kryphocron at-rest content opacity. Not encryption."
 repository = "https://github.com/skydeval/laquna"
 readme = "README.md"
 publish = false
 
 [features]
 default = ["std", "alloc"]
-# `alloc` enables the decode path and `Vec<u8>` returns (pure-Rust zstd decoder).
+# `alloc` enables the decode path and `Vec<u8>` returns; `no_std`-compatible.
 alloc = ["dep:ruzstd"]
-# `std` enables the encode path (C-backed zstd encoder via zstd-sys). Implies `alloc`.
+# `std` enables the encode path and implies `alloc`.
 std = ["alloc", "dep:zstd"]
 
 [dependencies]
-# ChaCha20 stream cipher (RFC 8439 IETF variant: 12-byte nonce, 32-bit counter).
 chacha20 = { version = "0.9", default-features = false }
-# HKDF-SHA256 slug-key derivation (RFC 5869).
+blake3 = { version = "1", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 sha2 = { version = "0.10", default-features = false }
-# Decode-side zstd: pure-Rust decoder, no_std + alloc compatible.
-# `hash` (no_std-safe twox-hash) is required for content-checksum verification:
-# ruzstd reads/computes the checksum but does not compare them itself, so the
-# decoder does the comparison manually (SPEC §6 step 7). `std` stays off.
+# Decode-side decompressor: pure-Rust, `no_std` + `alloc`. The `hash` feature
+# (no_std-safe) is needed because the decoder verifies the frame content checksum
+# manually — the dependency computes the checksum but does not compare it itself.
 ruzstd = { version = "0.7", default-features = false, features = ["hash"], optional = true }
-# Encode-side zstd: C-backed encoder, requires std.
+# Encode-side compressor; requires std.
 zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
-# Used only by the vector generator (examples/gen_vectors.rs) and the conformance
-# test suite to (de)serialize tests/vectors.json. Not part of the shipped crate.
+# Used only by the vector generator and conformance suite to (de)serialize
+# tests/vectors.json. Not part of the shipped crate.
 serde_json = "1"
 hex = "0.4"
 
