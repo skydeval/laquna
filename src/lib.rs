@@ -12,11 +12,100 @@
 //! laquna's value is friction against opportunistic, at-scale content extraction — not
 //! confidentiality, authentication, or resistance to a motivated adversary.
 //!
-//! The implementation is introduced module-by-module across the implementation arcs;
-//! this root is the placeholder left after the prior implementation was removed.
+//! ## Feature flags
+//!
+//! - `alloc` (default) enables the decode path and `Vec<u8>` returns; `no_std`-compatible.
+//! - `std` (default) enables the encode path and implies `alloc`.
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
 #[cfg(feature = "std")]
 extern crate std;
+
+mod errors;
+pub use errors::DecodeError;
+
+#[cfg(feature = "alloc")]
+mod combine;
+#[cfg(feature = "alloc")]
+mod format;
+#[cfg(feature = "alloc")]
+mod materials;
+#[cfg(feature = "alloc")]
+mod streams;
+
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
+#[cfg(feature = "alloc")]
+use materials::Material;
+
+/// Encode `plaintext` into an opaque artifact.
+///
+/// `seed` carries per-record entropy (and is treated as opaque bytes); `slug` is the
+/// 32-byte rotation-batch identifier embedded inline in the output.
+///
+/// # Panics
+///
+/// Panics if `seed` is empty.
+#[cfg(feature = "std")]
+pub fn encode(plaintext: &[u8], seed: &[u8], slug: &[u8; 32]) -> Vec<u8> {
+    assert!(!seed.is_empty(), "laquna: seed must be non-empty");
+
+    let payload_input = compress(plaintext);
+    let material = materials::derive(seed, slug);
+    let mask = build_mask(&material, payload_input.len());
+    let payload = combine::xor_buffers(&payload_input, &mask);
+
+    format::assemble(payload, slug)
+}
+
+/// Decode an artifact back to its plaintext.
+///
+/// The 32-byte slug is read from the tail of `encoded`; the caller supplies only the
+/// `seed` used at encode time.
+///
+/// # Errors
+///
+/// Returns a [`DecodeError`] for an empty seed, a too-short or wrong-version artifact,
+/// or bytes that fail to validate (wrong seed, wrong slug, or corruption).
+#[cfg(feature = "alloc")]
+pub fn decode(encoded: &[u8], seed: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    if seed.is_empty() {
+        return Err(DecodeError::EmptySeed);
+    }
+
+    let (payload, slug) = format::disassemble(encoded)?;
+    let material = materials::derive(seed, &slug);
+    let mask = build_mask(&material, payload.len());
+    let payload_input = combine::xor_buffers(&payload, &mask);
+
+    decompress(&payload_input)
+}
+
+/// Build the mask by producing the three component streams and folding them together.
+#[cfg(feature = "alloc")]
+fn build_mask(material: &Material, length: usize) -> Vec<u8> {
+    let mut anchor = streams::anchor::AnchorGenerator::new(material);
+    let mut extendable = streams::extendable::ExtendableGenerator::new(material);
+    let mut network = streams::network::NetworkGenerator::new(material);
+
+    let stream_a = anchor.produce(length);
+    let stream_b = extendable.produce(length);
+    let stream_c = network.produce(length);
+
+    combine::mix(&stream_a, &stream_b, &stream_c)
+}
+
+/// Compress the plaintext ahead of masking.
+#[cfg(feature = "std")]
+fn compress(_plaintext: &[u8]) -> Vec<u8> {
+    unimplemented!("compress lands in the pipeline arc")
+}
+
+/// Reverse [`compress`], surfacing any validation failure as a [`DecodeError`].
+#[cfg(feature = "alloc")]
+fn decompress(_payload_input: &[u8]) -> Result<Vec<u8>, DecodeError> {
+    unimplemented!("decompress lands in the pipeline arc")
+}
