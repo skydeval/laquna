@@ -1,30 +1,35 @@
-//! Reference test-vector generator for laquna v0.1 (SPEC §13).
+//! Reference test-vector generator for laquna v0.2 (SPEC §16).
 //!
-//! Run with `cargo run --example gen_vectors`. It writes the machine-readable
-//! vectors to `tests/vectors.json` (consumed by `tests/conformance.rs`) and prints
-//! a human-readable Markdown hex listing to stdout for pasting into SPEC §13.
+//! Run with `cargo run --example gen_vectors`. It writes the machine-readable vectors
+//! to `tests/vectors.json` (consumed by `tests/conformance.rs`) and prints a
+//! human-readable Markdown hex listing to stdout for pasting into SPEC §16.
 //!
 //! IMPORTANT — what these vectors are: the Schema A artifacts are produced by *this*
 //! reference implementation only. Other-language implementations need not reproduce
-//! them byte-for-byte (zstd encode output is implementation- and version-dependent;
-//! RFC 8478 standardizes decoding, not encoding). They are **reference-decode
-//! targets**, not cross-encode targets: a conforming implementation MUST decode each
-//! listed artifact under its seed to the listed plaintext.
+//! them byte-for-byte (the compression step's output is implementation-dependent; the
+//! standard fixes decoding, not encoding). They are **reference-decode targets**: a
+//! conforming implementation MUST decode each listed artifact under its seed to the
+//! listed plaintext.
 //!
-//! Schema B error cases (mismatched seed, corrupted slug, bit-flipped payload) are
-//! verified deterministic at generation time: the generator confirms each one
-//! actually produces the named error before emitting it.
+//! Schema B error cases are verified deterministic at generation time: the generator
+//! confirms each one actually produces the named error before emitting it.
+//!
+//! Schema C (component / round-by-round vectors per SPEC §16) is intentionally not
+//! emitted here: it would require exposing the construction's internal state through
+//! the public API, which the presentation discipline forbids. Its regression intent —
+//! catching round-collapse and hardcoded-offset bugs, across two distinct-offset
+//! materials — is covered by the in-source unit tests instead.
 
 use laquna::{decode, encode, DecodeError};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-/// Reference seed (kryphocron derives `did || rkey || spec-constant`).
-const SEED: &[u8] = b"did:plc:7iza6de2dwap2sbkpav7c6c6||3laqlxv2k7s2y||laquna/v0.1";
+/// Reference seed (the consuming system derives it from per-record identifiers).
+const SEED: &[u8] = b"did:plc:7iza6de2dwap2sbkpav7c6c6||3laqlxv2k7s2y||laquna/v0.2";
 /// A second seed, for the distinct-seed Schema A vector.
-const SEED2: &[u8] = b"did:plc:7iza6de2dwap2sbkpav7c6c6||3different-rkey||laquna/v0.1";
+const SEED2: &[u8] = b"did:plc:7iza6de2dwap2sbkpav7c6c6||3different-rkey||laquna/v0.2";
 
-/// Reference slug (any 32 bytes is valid; SPEC §9).
+/// Reference slug (any 32 bytes is valid).
 const SLUG: [u8; 32] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
@@ -33,7 +38,7 @@ const SLUG: [u8; 32] = [
 const SLUG2: [u8; 32] = [0xa5u8; 32];
 
 /// Candidate mismatched seeds for the Schema B wrong-seed vector; the generator picks
-/// the first one whose decode deterministically fails (SPEC §13 requirement).
+/// the first one whose decode deterministically fails.
 const WRONG_SEED_CANDIDATES: &[&[u8]] = &[
     b"mismatched-seed-candidate-0",
     b"mismatched-seed-candidate-1",
@@ -44,7 +49,7 @@ const WRONG_SEED_CANDIDATES: &[&[u8]] = &[
 fn typical_post_600() -> Vec<u8> {
     let mut s = String::new();
     while s.len() < 600 {
-        s.push_str("the bytes someone can pull from a PDS should not be greppable English text. ");
+        s.push_str("the bytes someone can pull from a record store should not be greppable text. ");
     }
     s.truncate(600);
     s.into_bytes()
@@ -72,9 +77,15 @@ struct SchemaA {
     artifact: Vec<u8>,
 }
 
-fn make_a(name: &'static str, description: &str, plaintext: Vec<u8>, seed: &[u8], slug: [u8; 32]) -> SchemaA {
+fn make_a(
+    name: &'static str,
+    description: &str,
+    plaintext: Vec<u8>,
+    seed: &[u8],
+    slug: [u8; 32],
+) -> SchemaA {
     let artifact = encode(&plaintext, seed, &slug);
-    // Determinism self-check: identical inputs must reproduce identical bytes (SPEC §4).
+    // Determinism self-check: identical inputs must reproduce identical bytes.
     let again = encode(&plaintext, seed, &slug);
     assert_eq!(artifact, again, "encode is not deterministic for vector '{name}'");
     // Sanity: the reference artifact must decode back under its own seed.
@@ -117,6 +128,7 @@ fn expected_to_json(e: &DecodeError) -> Value {
         DecodeError::InputTooShort => json!({ "error": "InputTooShort" }),
         DecodeError::InvalidVersion(v) => json!({ "error": "InvalidVersion", "version": v }),
         DecodeError::DecompressionFailed => json!({ "error": "DecompressionFailed" }),
+        DecodeError::EmptySeed => json!({ "error": "EmptySeed" }),
     }
 }
 
@@ -135,8 +147,14 @@ impl SchemaB {
     }
 }
 
-fn make_b(name: &'static str, description: &str, artifact: Vec<u8>, seed: &[u8], expected: DecodeError) -> SchemaB {
-    // Verify the case is deterministic before emitting it (SPEC §13).
+fn make_b(
+    name: &'static str,
+    description: &str,
+    artifact: Vec<u8>,
+    seed: &[u8],
+    expected: DecodeError,
+) -> SchemaB {
+    // Verify the case is deterministic before emitting it.
     let got = decode(&artifact, seed);
     assert_eq!(
         got,
@@ -160,14 +178,14 @@ fn main() {
         make_a("hello_world", "Short ASCII plaintext \"hello world\".", b"hello world".to_vec(), SEED, SLUG),
         make_a("all_zero_64", "64 bytes, all 0x00.", vec![0x00u8; 64], SEED, SLUG),
         make_a("all_ff_64", "64 bytes, all 0xFF.", vec![0xffu8; 64], SEED, SLUG),
-        make_a("typical_post_600", "~600-byte typical Bluesky post (UTF-8).", typical_post_600(), SEED, SLUG),
+        make_a("typical_post_600", "~600-byte typical post (UTF-8).", typical_post_600(), SEED, SLUG),
         make_a("stress_64k", "64 KiB stress plaintext: byte i = i mod 251.", stress_64k(), SEED, SLUG),
         make_a("slug_inline", "Plaintext embeds the 32-byte slug inline (must not be stripped/escaped).", slug_inline_plaintext(), SEED, SLUG),
         make_a("hello_world_slug2", "Same plaintext+seed as `hello_world` but a distinct slug; artifact MUST differ.", b"hello world".to_vec(), SEED, SLUG2),
         make_a("hello_world_seed2", "Same plaintext+slug as `hello_world` but a distinct seed; artifact MUST differ.", b"hello world".to_vec(), SEED2, SLUG),
     ];
 
-    // Cross-vector property assertions (SPEC §13 Schema A): distinctness.
+    // Cross-vector property assertions (SPEC §16 Schema A): distinctness.
     let by_name = |n: &str| schema_a.iter().find(|v| v.name == n).unwrap();
     assert_ne!(by_name("hello_world").artifact, by_name("hello_world_slug2").artifact);
     assert_ne!(by_name("hello_world").artifact, by_name("hello_world_seed2").artifact);
@@ -178,7 +196,7 @@ fn main() {
     );
 
     // ---- Schema B: decode-error vectors ----
-    // A valid artifact reused by the seed-mismatch / corruption cases.
+    // A valid artifact reused by the empty-seed / seed-mismatch / corruption cases.
     let b_plaintext: &[u8] = b"some private post content of a reasonable, compressible length";
     let valid = encode(b_plaintext, SEED, &SLUG);
 
@@ -199,21 +217,22 @@ fn main() {
     let mid = 1 + (bitflip.len() - 33) / 2;
     bitflip[mid] ^= 0x01;
 
-    let mut bad_version_00 = vec![0u8; 33];
-    bad_version_00[0] = 0x00;
-    let mut bad_version_02 = vec![0u8; 33];
-    bad_version_02[0] = 0x02;
-    let mut bad_version_ff = vec![0u8; 33];
-    bad_version_ff[0] = 0xff;
+    let bad_version = |v: u8| {
+        let mut a = vec![0u8; 33];
+        a[0] = v;
+        a
+    };
 
     let schema_b = vec![
         make_b("too_short_0", "Zero-length artifact.", Vec::new(), SEED, DecodeError::InputTooShort),
-        make_b("too_short_1", "1-byte artifact.", vec![0x01], SEED, DecodeError::InputTooShort),
+        make_b("too_short_1", "1-byte artifact.", vec![0x02], SEED, DecodeError::InputTooShort),
         make_b("too_short_16", "16-byte artifact.", vec![0u8; 16], SEED, DecodeError::InputTooShort),
         make_b("too_short_32", "32-byte artifact (one below the floor).", vec![0u8; 32], SEED, DecodeError::InputTooShort),
-        make_b("bad_version_00", "33-byte artifact with version byte 0x00.", bad_version_00, SEED, DecodeError::InvalidVersion(0x00)),
-        make_b("bad_version_02", "33-byte artifact with version byte 0x02.", bad_version_02, SEED, DecodeError::InvalidVersion(0x02)),
-        make_b("bad_version_ff", "33-byte artifact with version byte 0xFF.", bad_version_ff, SEED, DecodeError::InvalidVersion(0xff)),
+        make_b("bad_version_00", "33-byte artifact with version byte 0x00.", bad_version(0x00), SEED, DecodeError::InvalidVersion(0x00)),
+        make_b("bad_version_01", "33-byte artifact with version byte 0x01 (the prior format version).", bad_version(0x01), SEED, DecodeError::InvalidVersion(0x01)),
+        make_b("bad_version_03", "33-byte artifact with version byte 0x03.", bad_version(0x03), SEED, DecodeError::InvalidVersion(0x03)),
+        make_b("bad_version_ff", "33-byte artifact with version byte 0xFF.", bad_version(0xff), SEED, DecodeError::InvalidVersion(0xff)),
+        make_b("empty_seed", "Valid artifact decoded under an empty seed.", valid.clone(), b"", DecodeError::EmptySeed),
         make_b("wrong_seed", "Valid artifact decoded under a deliberately mismatched seed.", valid.clone(), wrong_seed, DecodeError::DecompressionFailed),
         make_b("corrupted_slug", "Valid artifact with the tail slug corrupted.", corrupted_slug, SEED, DecodeError::DecompressionFailed),
         make_b("bitflip_payload", "Valid artifact with a single payload bit flipped.", bitflip, SEED, DecodeError::DecompressionFailed),
@@ -222,8 +241,8 @@ fn main() {
     // ---- Write tests/vectors.json ----
     let root = json!({
         "spec": "laquna",
-        "spec_version": "0.1",
-        "note": "Schema A artifacts are from the reference implementation only. Other implementations need not produce byte-identical encode output; they MUST decode each artifact under its seed to the listed plaintext. These are reference-decode targets, not cross-encode targets. Schema B error cases are verified deterministic at generation time.",
+        "spec_version": "0.2",
+        "note": "Schema A artifacts are from the reference implementation only. Other implementations need not produce byte-identical encode output; they MUST decode each artifact under its seed to the listed plaintext. These are reference-decode targets, not cross-encode targets. Schema B error cases are verified deterministic at generation time. Schema C component vectors are not included: emitting them would require exposing internal state through the public API; their regression intent is covered by the in-source unit tests.",
         "schema_a": Value::Array(schema_a.iter().map(SchemaA::to_json).collect()),
         "schema_b": Value::Array(schema_b.iter().map(SchemaB::to_json).collect()),
     });
@@ -231,13 +250,13 @@ fn main() {
     std::fs::write("tests/vectors.json", format!("{serialized}\n")).expect("write tests/vectors.json");
     eprintln!("wrote tests/vectors.json ({} bytes)", serialized.len() + 1);
 
-    // ---- Emit the human-readable Markdown listing for SPEC §13 ----
+    // ---- Emit the human-readable Markdown listing for SPEC §16 ----
     print_markdown(&schema_a, &schema_b, wrong_seed);
 }
 
-/// Threshold above which a vector's hex is summarized (by length + SHA-256) rather
-/// than inlined in the SPEC. Keeps the 64 KiB stress vector from bloating the doc;
-/// full bytes always live in tests/vectors.json.
+/// Threshold above which a vector's hex is summarized (by length + SHA-256) rather than
+/// inlined in the SPEC. Keeps the 64 KiB stress vector from bloating the doc; full bytes
+/// always live in tests/vectors.json.
 const INLINE_HEX_LIMIT: usize = 2048;
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -290,6 +309,7 @@ fn print_markdown(schema_a: &[SchemaA], schema_b: &[SchemaB], wrong_seed: &[u8])
             DecodeError::InputTooShort => "InputTooShort".to_string(),
             DecodeError::InvalidVersion(n) => format!("InvalidVersion({n})"),
             DecodeError::DecompressionFailed => "DecompressionFailed".to_string(),
+            DecodeError::EmptySeed => "EmptySeed".to_string(),
         };
         println!("- **{}** — {}", v.name, v.description);
         println!("  - artifact: {}", hex_field(&v.artifact));

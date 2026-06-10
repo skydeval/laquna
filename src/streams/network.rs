@@ -243,6 +243,24 @@ mod tests {
         assert!((3..=63).contains(&g.offset), "offset must lie in [3, 63]");
     }
 
+    /// A second material derives a different diffuse offset (55, not 59) and different
+    /// output. This catches an implementation that hardcoded a single offset — the
+    /// source-side equivalent of pinning two distinct-offset reference materials. Both
+    /// the offset and the first block are checked against the independent reference.
+    #[test]
+    fn distinct_material_has_distinct_offset() {
+        const SLUG2: [u8; 32] = [0xa5; 32];
+        const EXPECT_OFFSET2: usize = 55;
+        const EXPECT_FIRST_64_2: &str = "022695f9b7efeef263b244a2f5283051442226c755ac7f9341ee5ead81923794fa65db8414b7ebfb3867049db44ba4d19fa3b8b8872cc7445a45705aa3f8bf03";
+
+        let g = NetworkGenerator::new(&derive(SEED, &SLUG2));
+        assert_eq!(g.offset, EXPECT_OFFSET2);
+        assert_ne!(g.offset, EXPECT_OFFSET, "the two materials must derive distinct offsets");
+
+        let first = NetworkGenerator::new(&derive(SEED, &SLUG2)).produce(64);
+        assert_eq!(first, expect(EXPECT_FIRST_64_2));
+    }
+
     #[test]
     fn substitution_tables_are_permutations() {
         let g = generator();
