@@ -1,6 +1,6 @@
 [package]
 name = "laquna"
-version = "0.2.1"
+version = "0.2.0"
 edition = "2024"
 license = "MPL-2.0"
 description = "Byte transform for kryphocron at-rest content opacity. Not encryption."
