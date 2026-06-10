@@ -26,6 +26,9 @@ extern crate std;
 mod errors;
 pub use errors::DecodeError;
 
+#[cfg(feature = "testing-internals")]
+pub mod _internals;
+
 #[cfg(feature = "alloc")]
 mod combine;
 #[cfg(feature = "alloc")]

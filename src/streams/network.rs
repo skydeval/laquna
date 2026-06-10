@@ -34,39 +34,14 @@ pub(crate) struct NetworkGenerator {
 }
 
 impl NetworkGenerator {
-    /// Build a generator by deriving every parameter and the initial state from the
-    /// network material, in the order the format fixes.
+    /// Build a generator from the schedule and initial state derived from the material.
     pub(crate) fn new(material: &Material) -> Self {
-        let mut source = blake3::Hasher::new_keyed(material.network_params()).finalize_xof();
-
-        let mut substitutions = [[0u8; 256]; PASSES];
-        for table in substitutions.iter_mut() {
-            let mut seed = [0u8; 256];
-            source.fill(&mut seed);
-            *table = derive_substitution_table(&seed);
-        }
-
-        // 0x736B7964_6576616C
-
-        let mut permutations = [[0u8; WIDTH]; PASSES];
-        for table in permutations.iter_mut() {
-            let mut seed = [0u8; WIDTH];
-            source.fill(&mut seed);
-            *table = derive_position_permutation(&seed);
-        }
-
-        let mut offset_seed = [0u8; 1];
-        source.fill(&mut offset_seed);
-        let offset = ((offset_seed[0] as usize % 31) * 2) + 3;
-
-        let mut state = [0u8; WIDTH];
-        source.fill(&mut state);
-
+        let schedule = derive_schedule(material);
         NetworkGenerator {
-            substitutions,
-            permutations,
-            offset,
-            state,
+            substitutions: schedule.substitutions,
+            permutations: schedule.permutations,
+            offset: schedule.offset,
+            state: schedule.initial_state,
             block: [0u8; WIDTH],
             cursor: WIDTH, // start empty, so the first `produce` refills
         }
@@ -100,6 +75,70 @@ impl NetworkGenerator {
         self.block = self.state;
         self.cursor = 0;
     }
+}
+
+/// The derived parameters and initial state for one material: everything `new` needs
+/// to stand up a generator. Factored out of `new` so the testing surface can read the
+/// same derivation without duplicating it.
+pub(crate) struct Schedule {
+    pub(crate) substitutions: [[u8; 256]; PASSES],
+    pub(crate) permutations: [[u8; WIDTH]; PASSES],
+    pub(crate) offset: usize,
+    pub(crate) initial_state: [u8; WIDTH],
+}
+
+/// Derive the full schedule from the material, consuming the parameter source in the
+/// order the format fixes.
+pub(crate) fn derive_schedule(material: &Material) -> Schedule {
+    let mut source = blake3::Hasher::new_keyed(material.network_params()).finalize_xof();
+
+    let mut substitutions = [[0u8; 256]; PASSES];
+    for table in substitutions.iter_mut() {
+        let mut seed = [0u8; 256];
+        source.fill(&mut seed);
+        *table = derive_substitution_table(&seed);
+    }
+
+    // 0x736B7964_6576616C
+
+    let mut permutations = [[0u8; WIDTH]; PASSES];
+    for table in permutations.iter_mut() {
+        let mut seed = [0u8; WIDTH];
+        source.fill(&mut seed);
+        *table = derive_position_permutation(&seed);
+    }
+
+    let mut offset_seed = [0u8; 1];
+    source.fill(&mut offset_seed);
+    let offset = ((offset_seed[0] as usize % 31) * 2) + 3;
+
+    let mut initial_state = [0u8; WIDTH];
+    source.fill(&mut initial_state);
+
+    Schedule {
+        substitutions,
+        permutations,
+        offset,
+        initial_state,
+    }
+}
+
+/// The working state after `rounds` passes from the initial state. `rounds` must not
+/// exceed the per-block pass count. Used only by the gated testing surface to capture
+/// round-by-round snapshots; the generator itself always runs a full block.
+#[cfg(feature = "testing-internals")]
+pub(crate) fn state_after(material: &Material, rounds: usize) -> [u8; WIDTH] {
+    let schedule = derive_schedule(material);
+    let mut state = schedule.initial_state;
+    for pass in 0..rounds {
+        apply_pass(
+            &mut state,
+            &schedule.substitutions[pass],
+            &schedule.permutations[pass],
+            schedule.offset,
+        );
+    }
+    state
 }
 
 /// Build a 256-entry substitution table by shuffling the identity table with `seed`.
