@@ -12,7 +12,8 @@ pub(crate) struct ExtendableGenerator;
 
 impl ExtendableGenerator {
     /// Build a generator seeded from the extendable material.
-    pub(crate) fn new(_material: &Material) -> Self {
+    pub(crate) fn new(material: &Material) -> Self {
+        let _seed = material.extendable();
         unimplemented!("extendable generator lands in the stream arc")
     }
 

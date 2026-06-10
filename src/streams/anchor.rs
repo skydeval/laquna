@@ -12,7 +12,8 @@ pub(crate) struct AnchorGenerator;
 
 impl AnchorGenerator {
     /// Build a generator seeded from the anchor material.
-    pub(crate) fn new(_material: &Material) -> Self {
+    pub(crate) fn new(material: &Material) -> Self {
+        let _seed = material.anchor();
         unimplemented!("anchor generator lands in the stream arc")
     }
 

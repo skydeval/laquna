@@ -15,7 +15,8 @@ pub(crate) struct NetworkGenerator;
 
 impl NetworkGenerator {
     /// Build a generator by deriving the network's parameters and initial state.
-    pub(crate) fn new(_material: &Material) -> Self {
+    pub(crate) fn new(material: &Material) -> Self {
+        let _seed = material.network_params();
         unimplemented!("network generator lands in the stream arc")
     }
 
