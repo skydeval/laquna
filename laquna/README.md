@@ -54,7 +54,7 @@ The encode path requires `std`; the decode path is `no_std`-compatible with the
   byte layout, decode validation order, and versioning.
 - [Conformance](https://github.com/skydeval/laquna/blob/main/docs/conformance.md):
   reference vectors and what a conforming implementation must do.
-- [Changelog](CHANGELOG.md)
+- [Changelog](https://github.com/skydeval/laquna/blob/main/CHANGELOG.md)
 
 ## License
 

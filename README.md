@@ -8,7 +8,7 @@ authentication, or resistance to a motivated adversary.
 
 - [`laquna/`](laquna/): the Rust crate. Start with its [README](laquna/README.md).
 - [`docs/`](docs/): design, format, and conformance documentation.
-- [Changelog](laquna/CHANGELOG.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
