@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 /// A representative per-record seed (the consuming system derives it from per-record
-/// identifiers plus a spec constant).
+/// identifiers plus a format-version label).
 pub const SEED: &[u8] = b"did:plc:7iza6de2dwap2sbkpav7c6c6||3laqlxv2k7s2y||laquna/v0.2";
 
 /// A fixed 32-byte slug. Any 32-byte value is a valid slug.

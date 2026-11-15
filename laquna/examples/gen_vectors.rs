@@ -1,8 +1,9 @@
-//! Reference test-vector generator for laquna v0.2 (SPEC §16).
+//! Reference test-vector generator for laquna v0.2.
 //!
-//! Run with `cargo run --example gen_vectors`. It writes the machine-readable vectors
-//! to `tests/vectors.json` (consumed by `tests/conformance.rs`) and prints a
-//! human-readable Markdown hex listing to stdout for pasting into SPEC §16.
+//! Run from the crate directory with
+//! `cargo run --example gen_vectors --features testing-internals`. It writes the
+//! machine-readable vectors to `tests/vectors.json` (consumed by `tests/conformance.rs`)
+//! and prints a human-readable Markdown hex listing to stdout.
 //!
 //! IMPORTANT — what these vectors are: the Schema A artifacts are produced by *this*
 //! reference implementation only. Other-language implementations need not reproduce
@@ -14,11 +15,9 @@
 //! Schema B error cases are verified deterministic at generation time: the generator
 //! confirms each one actually produces the named error before emitting it.
 //!
-//! Schema C (component / round-by-round vectors per SPEC §16) is intentionally not
-//! emitted here: it would require exposing the construction's internal state through
-//! the public API, which the presentation discipline forbids. Its regression intent —
-//! catching round-collapse and hardcoded-offset bugs, across two distinct-offset
-//! materials — is covered by the in-source unit tests instead.
+//! Schema C vectors expose component-stream and round-by-round internal state for two
+//! `(seed, slug)` pairs with distinct diffuse offsets. They are read through the
+//! feature-gated `_internals` surface and are debugging aids, not conformance targets.
 
 use laquna::{decode, encode, DecodeError, _internals};
 use serde_json::{json, Value};
@@ -256,7 +255,7 @@ fn main() {
         make_a("hello_world_seed2", "Same plaintext+slug as `hello_world` but a distinct seed; artifact MUST differ.", b"hello world".to_vec(), SEED2, SLUG),
     ];
 
-    // Cross-vector property assertions (SPEC §16 Schema A): distinctness.
+    // Cross-vector property assertions (Schema A): distinctness.
     let by_name = |n: &str| schema_a.iter().find(|v| v.name == n).unwrap();
     assert_ne!(by_name("hello_world").artifact, by_name("hello_world_slug2").artifact);
     assert_ne!(by_name("hello_world").artifact, by_name("hello_world_seed2").artifact);
@@ -323,7 +322,7 @@ fn main() {
     // ---- Write tests/vectors.json ----
     let root = json!({
         "spec": "laquna",
-        "spec_version": "0.2.1",
+        "spec_version": "0.2.0",
         "note": "Schema A artifacts are from the reference implementation only. Other implementations need not produce byte-identical encode output; they MUST decode each artifact under its seed to the listed plaintext. These are reference-decode targets, not cross-encode targets. Schema B error cases are verified deterministic at generation time. Schema C exposes the network stream's internal state for two distinct-offset (seed, slug) pairs; it is a debugging aid, not required for conformance.",
         "schema_a": Value::Array(schema_a.iter().map(SchemaA::to_json).collect()),
         "schema_b": Value::Array(schema_b.iter().map(SchemaB::to_json).collect()),
@@ -333,12 +332,12 @@ fn main() {
     std::fs::write("tests/vectors.json", format!("{serialized}\n")).expect("write tests/vectors.json");
     eprintln!("wrote tests/vectors.json ({} bytes)", serialized.len() + 1);
 
-    // ---- Emit the human-readable Markdown listing for SPEC §16 ----
+    // ---- Emit the human-readable Markdown listing ----
     print_markdown(&schema_a, &schema_b, &schema_c, wrong_seed);
 }
 
 /// Threshold above which a vector's hex is summarized (by length + SHA-256) rather than
-/// inlined in the SPEC. Keeps the 64 KiB stress vector from bloating the doc; full bytes
+/// inlined in the listing. Keeps the 64 KiB stress vector from bloating the doc; full bytes
 /// always live in tests/vectors.json.
 const INLINE_HEX_LIMIT: usize = 2048;
 
@@ -428,7 +427,7 @@ fn print_markdown(
         println!("  - W after 1 round: `{}`", hex::encode(v.state_after_1));
         println!("  - W after 2 rounds: `{}`", hex::encode(v.state_after_2));
         println!("  - W after 8 rounds: `{}`", hex::encode(v.state_after_8));
-        println!("  - combined keystream (first 64): `{}`", hex::encode(&v.combined));
+        println!("  - combined mask (first 64): `{}`", hex::encode(&v.combined));
     }
     println!();
     println!("<!-- END GENERATED VECTORS -->");
